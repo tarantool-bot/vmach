@@ -1,0 +1,280 @@
+#!/bin/bash
+
+FALSE=0
+TRUE=1
+
+# qemu binary
+VMACH_MANAGER_QUEMU_BIN=/opt/qemu-kvm/bin/qemu-system-x86_64
+# virtual machines namager home directory
+VMACH_MANAGER_HOME=/data/vmach
+# virtual machines dircetory
+VMACH_MANAGER_VMACHS_DIR=$VMACH_MANAGER_HOME/vmachs
+# default ram value
+VMACH_MANAGER_DEFAULT_RAM=512
+# default boot device
+VMACH_MANAGER_DEFAULT_BOOT=disk
+
+function vmach_load_default_config()
+{
+	vmach_mem=$VMACH_MANAGER_DEFAULT_RAM
+	vmach_cdrom=
+	vmach_disk=
+	vmach_boot=$VMACH_MANAGER_DEFAULT_BOOT
+	vmach_ssh_user=
+	vmach_ssh_port=
+	vmach_pid_file=
+}
+
+function vmach_load_config()
+{
+	local vmach_name=$1
+	local vmach_path=$VMACH_MANAGER_VMACHS_DIR/$vmach_name
+	local vmach_conf=$vmach_path/vmach.cfg
+
+	if [ ! -d $VMACH_MANAGER_VMACHS_DIR/$vmach_name ]; then
+		echo "error: virtual machine '$vmach_name' doesn't exist"
+		return $FALSE
+	fi
+
+	if [ ! -f $vmach_conf ]; then
+		echo "error: config file doesn't exist"
+		return $FALSE
+	fi
+
+	# Load default variables
+	vmach_load_default_config
+	# Load variables from virtual machine's config
+	source $vmach_conf
+
+	# Add path to cd-rom file
+	if [[ "$vmach_cdrom" != "" ]]; then
+		vmach_cdrom=$vmach_path/$vmach_cdrom
+	fi 
+	vmach_disk=$vmach_path/$vmach_disk
+
+	# pid file
+	vmach_pid_file=$vmach_path/vmach.pid
+
+	# Start-up arguments
+	vmach_startup_args=""
+
+	# Run in text mode
+	vmach_startup_args+=" --nographic"
+	# Demonize process
+	vmach_startup_args+=" --daemonize"
+	# Pid file
+	vmach_startup_args+=" -pidfile $vmach_pid_file"
+	# Network
+	vmach_startup_args+=" -net nic,model=e1000 -net user"
+	if [[ "$vmach_ssh_port" == "" ]]; then
+		echo "error: ssh port isn't specified"
+		return $FALSE
+	fi
+	vmach_startup_args+=" -redir tcp:$vmach_ssh_port::22"
+	# Add http parameter
+	if [[ "$vmach_http_port" != "" ]]; then
+		vmach_startup_args+=" -redir tcp:$vmach_http_port::80"
+	fi
+	# Add carbon (graphite) parameter
+	if [[ "$vmach_carbon_port" != "" ]]; then
+		vmach_startup_args+=" -redir udp:$vmach_carbon_port::2003"
+	fi
+
+	# Add ram parameter
+	vmach_startup_args+=" -m $vmach_mem"
+
+	# Add cd-rom parameter
+	if [[ "$vmach_cdrom" != "" ]]; then
+		if [ ! -f $vmach_cdrom ]; then
+			echo "error: cd-rom image '$vmach_cdrom' doesn't exist"
+			return $FALSE
+		fi
+		vmach_startup_args+=" -cdrom $vmach_cdrom"
+	fi
+
+	# Add disk parameter
+	if [[ "$vmach_disk" == "" ]]; then
+		echo "error: disk isn't defined"
+		return $FALSE
+	fi
+	if [ ! -f $vmach_disk ]; then
+		echo "error: disk image doesn't exist"
+		return $FALSE
+	fi
+	vmach_startup_args+=" -drive file=$vmach_disk"
+
+	vmach_startup_args+=" -boot"
+	case $vmach_boot in
+	"disk")
+		vmach_startup_args+=" c"
+		;;
+	"cdrom")
+		vmach_startup_args+=" d"
+		;;
+	*)
+		echo "error: invalid boot device '$vmach_boot'"
+		return $FALSE
+		;;
+	esac
+
+	return $TRUE
+}
+
+function vmach_clean_config()
+{
+	unset vmach_mem
+	unset vmach_cdrom
+	unset vmach_disk
+	unset vmach_boot
+	unset vmach_ssh_port
+	unset vmach_startup_args
+	unset vmach_pid_file
+}
+
+function vmach_is_started()
+{
+	if [ ! -f $vmach_pid_file ]; then
+		return $FALSE
+	fi
+
+	local vmach_pid=`cat $vmach_pid_file`
+	kill -0 $vmach_pid 1> /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		return $FALSE
+	fi
+
+	return $TRUE
+}
+
+function vmach_start_machine()
+{
+	local vmach_name=$1
+
+	# Check machine status
+	vmach_is_started
+	if [ $? -eq $TRUE ]; then
+		echo "error: virtual machine is already started"
+		return $FALSE
+	fi
+
+	# Start machine
+	$VMACH_MANAGER_QUEMU_BIN $vmach_startup_args
+	stty sane
+
+	return $TRUE
+}
+
+function vmach_stop_machine()
+{
+	local vmach_name=$1
+
+	# Check machine status
+	vmach_is_started
+	if [ $? -eq $FALSE ]; then
+		echo "error: virtual machine is already stopped"
+		return $FALSE
+	fi
+
+	# kill machine
+	local vmach_path=$VMACH_MANAGER_VMACHS_DIR/$vmach_name
+	local vmach_pid_file=$vmach_path/vmach.pid
+	local vmach_pid=`cat $vmach_pid_file`
+	kill $vmach_pid 1> /dev/null 2>&1
+	rm -f $vmach_pid_file
+
+	return $TRUE
+}
+
+function vmach_show_info()
+{
+	local vmach_name=$1
+
+	# Check running status
+	vmach_is_started
+	if [ $? -eq $TRUE ]; then
+		vmach_status="started"
+	else
+		vmach_status="stopped"
+	fi
+
+	echo "%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<%<"
+	echo "machine '$vmach_name'"
+	echo "status:        $vmach_status"
+	echo "ram:           $vmach_mem MiB"
+	echo "cd-rom:        $vmach_cdrom"
+	echo "disk:          $vmach_disk"
+	echo "boot device:   $vmach_boot"
+	echo "ssh port:      $vmach_ssh_port"
+	echo "start-up args: $vmach_startup_args"
+
+	return $TRUE
+}
+
+function vmach_ssh_config()
+{
+	local vmach_name=$1
+
+	echo "Host $vmach_name"
+	echo "	HostName 127.0.0.1"
+	echo "	User $vmach_ssh_user"
+	echo "	Port $vmach_ssh_port"
+
+	return $TRUE	
+}
+
+function vmach_dispach_command()
+{
+	local vmach_cmd=$1
+	local vmach_name=$2
+
+	# Load config
+	vmach_load_config $vmach_name
+	if [ $? -ne $TRUE ]; then
+		return $FALSE
+	fi
+
+	case $vmach_cmd in
+	"start")
+		vmach_start_machine $vmach_name
+		;;
+	"stop")
+		vmach_stop_machine $vmach_name
+		;;
+	"info")
+		vmach_show_info $vmach_name
+		;;
+	"ssh-config")
+		vmach_ssh_config $vmach_name
+		;;
+	*)
+		echo "error: invalid command '$vmach_cmd'"
+		exit 1
+		;;
+	esac
+
+	# Clean-up config
+	vmach_clean_config
+}
+
+function vmach_main()
+{
+	vmach_cmd=$1
+	vmach_name=$2
+
+	if [[ "$vmach_name" == "" ]]; then
+		echo "error: virtual machine isn't defined"
+		exit -1
+	fi
+
+	if [[ "$vmach_name" == "all" ]]; then
+		for vmach_name in `ls $VMACH_MANAGER_VMACHS_DIR`
+		do
+			vmach_dispach_command $vmach_cmd $vmach_name
+		done
+	else
+		vmach_dispach_command $vmach_cmd $vmach_name
+	fi
+}
+
+vmach_main $1 $2
+

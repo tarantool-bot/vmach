@@ -1,0 +1,7 @@
+centos5-amd64 - Centos 5.8, 64bit, buildslave
+centos-i386  -  Centos 5.8, 32 bit, git-mon
+debian-builder - Debian Wheezy, 64bit, .deb packaging, 32 and 64 bit
+debian-squeeze-amd64 - Debian Squeeze, 64 bit, unused, see Bug#983862
+debian-wheezy-amd64 - Debian Wheezy, 64 bit, buildslave
+freebsd-i386 - FreeBSD 8.2, 32 bit, package builder
+centos6-amd64 -  centos 6.3, .rpm packaging 
